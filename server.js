@@ -5,12 +5,10 @@ const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 
-// رابط الترحيب
 app.get('/', (req, res) => {
   res.json({ status: 'ok', message: 'سيرفر مانجا ستار شغال!' });
 });
 
-// رابط تجريبي للمانجا
 app.get('/manga', (req, res) => {
   res.json({
     status: 'ok',
@@ -22,5 +20,5 @@ app.get('/manga', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  console.log('Server is running on port ' + PORT);
 });
