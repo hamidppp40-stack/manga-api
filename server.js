@@ -1,79 +1,111 @@
 const express = require('express');
 const cors = require('cors');
-const Nyora = require('nyora-sdk');
+const axios = require('axios');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 
-// إنشاء عميل Nyora
-const client = new Nyora();
+const API = 'https://api.mangadex.org';
 
 // 1) الصفحة الرئيسية
 app.get('/', (req, res) => {
   res.json({ status: 'ok', message: 'سيرفر مانجا ستار شغال!' });
 });
 
-// 2) جلب المصادر العربية فقط
-app.get('/sources', async (req, res) => {
-  try {
-    const allSources = await client.sources.list();
-    // فلترة المصادر العربية (لغة ar)
-    const arabicSources = allSources.filter(s => s.lang === 'ar' || s.lang === 'arabic');
-    res.json({ status: 'ok', count: arabicSources.length, sources: arabicSources });
-  } catch (e) {
-    res.status(500).json({ status: 'error', message: e.message });
-  }
-});
-
-// 3) قائمة المانجا (بحث أو الأكثر شهرة)
+// 2) قائمة المانجا العربية
 app.get('/manga', async (req, res) => {
   try {
-    const { sourceId, query, page } = req.query;
-    const p = parseInt(page) || 1;
-    let result;
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = parseInt(req.query.offset) || 0;
 
-    if (query) {
-      result = await client.manga.search(sourceId, query, p);
-    } else {
-      result = await client.manga.popular(sourceId, p);
-    }
+    const response = await axios.get(`${API}/manga`, {
+      params: {
+        limit: limit,
+        offset: offset,
+        'availableTranslatedLanguage[]': 'ar',
+        'includes[]': 'cover_art',
+        'order[latestUploadedChapter]': 'desc'
+      }
+    });
 
-    res.json({ status: 'ok', page: p, hasNextPage: result.hasNextPage, mangas: result.entries });
+    const mangas = response.data.data.map(m => {
+      const title = m.attributes.title.ar 
+        || m.attributes.title.en 
+        || Object.values(m.attributes.title)[0] 
+        || 'بدون اسم';
+      const coverRel = m.relationships.find(r => r.type === 'cover_art');
+      const coverFile = coverRel?.attributes?.fileName;
+      const cover = coverFile 
+        ? `https://uploads.mangadex.org/covers/${m.id}/${coverFile}.256.jpg` 
+        : null;
+
+      return { id: m.id, title, cover };
+    });
+
+    res.json({ status: 'ok', count: mangas.length, mangas });
   } catch (e) {
     res.status(500).json({ status: 'error', message: e.message });
   }
 });
 
-// 4) تفاصيل المانجا + الفصول
-app.get('/manga/details', async (req, res) => {
+// 3) تفاصيل مانجا + الفصول العربية
+app.get('/manga/:id', async (req, res) => {
   try {
-    const { sourceId, mangaUrl, title } = req.query;
-    const details = await client.manga.details(sourceId, mangaUrl, { title });
-    res.json({ status: 'ok', details });
+    const id = req.params.id;
+
+    const info = await axios.get(`${API}/manga/${id}`, {
+      params: { 'includes[]': 'cover_art' }
+    });
+
+    const m = info.data.data;
+    const title = m.attributes.title.ar 
+      || m.attributes.title.en 
+      || Object.values(m.attributes.title)[0] 
+      || 'بدون اسم';
+    const description = m.attributes.description?.ar 
+      || m.attributes.description?.en 
+      || 'لا يوجد وصف';
+    const coverRel = m.relationships.find(r => r.type === 'cover_art');
+    const coverFile = coverRel?.attributes?.fileName;
+    const cover = coverFile 
+      ? `https://uploads.mangadex.org/covers/${id}/${coverFile}.512.jpg` 
+      : null;
+
+    const chaptersRes = await axios.get(`${API}/manga/${id}/feed`, {
+      params: {
+        limit: 500,
+        'translatedLanguage[]': ['ar'],
+        'order[chapter]': 'desc'
+      }
+    });
+
+    const chapters = chaptersRes.data.data.map(c => ({
+      id: c.id,
+      name: c.attributes.chapter 
+        ? `الفصل ${c.attributes.chapter}` 
+        : c.attributes.title || 'فصل'
+    }));
+
+    res.json({ status: 'ok', id, title, cover, description, chapters });
   } catch (e) {
     res.status(500).json({ status: 'error', message: e.message });
   }
 });
 
-// 5) صور الفصل
-app.get('/chapter/pages', async (req, res) => {
+// 4) صور الفصل
+app.get('/chapter/:id', async (req, res) => {
   try {
-    const { sourceId, chapterUrl, branch } = req.query;
-    const pages = await client.manga.pages(sourceId, chapterUrl, { branch });
-    res.json({ status: 'ok', pages });
-  } catch (e) {
-    res.status(500).json({ status: 'error', message: e.message });
-  }
-});
+    const id = req.params.id;
 
-// 6) أحدث التحديثات (للمانجا والمانهوا العربية)
-app.get('/latest', async (req, res) => {
-  try {
-    const { sourceId, page } = req.query;
-    const p = parseInt(page) || 1;
-    const latest = await client.manga.latest(sourceId, p);
-    res.json({ status: 'ok', page: p, hasNextPage: latest.hasNextPage, mangas: latest.entries });
+    const chapterRes = await axios.get(`${API}/at-home/server/${id}`);
+    const baseUrl = chapterRes.data.baseUrl;
+    const hash = chapterRes.data.chapter.hash;
+    const data = chapterRes.data.chapter.data;
+
+    const images = data.map(file => `${baseUrl}/data/${hash}/${file}`);
+
+    res.json({ status: 'ok', id, images });
   } catch (e) {
     res.status(500).json({ status: 'error', message: e.message });
   }
