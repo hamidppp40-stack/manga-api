@@ -13,10 +13,10 @@ app.get('/', (req, res) => {
   res.json({ status: 'ok', message: 'سيرفر مانجا ستار شغال!' });
 });
 
-// 2) قائمة المانجا العربية
+// 2) قائمة المانجا مع Pagination
 app.get('/manga', async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 20;
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
     const offset = parseInt(req.query.offset) || 0;
 
     const response = await axios.get(`${API}/manga`, {
@@ -39,17 +39,74 @@ app.get('/manga', async (req, res) => {
       const cover = coverFile 
         ? `https://uploads.mangadex.org/covers/${m.id}/${coverFile}.256.jpg` 
         : null;
-
       return { id: m.id, title, cover };
     });
 
-    res.json({ status: 'ok', count: mangas.length, mangas });
+    const total = response.data.total || 0;
+    res.json({ 
+      status: 'ok', 
+      count: mangas.length, 
+      offset: offset,
+      total: total,
+      hasMore: (offset + limit) < total,
+      mangas 
+    });
   } catch (e) {
     res.status(500).json({ status: 'error', message: e.message });
   }
 });
 
-// 3) تفاصيل مانجا + الفصول العربية
+// 3) البحث في المانجا
+app.get('/manga/search', async (req, res) => {
+  try {
+    const q = req.query.q || '';
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+    const offset = parseInt(req.query.offset) || 0;
+
+    if (!q || q.trim() === '') {
+      return res.json({ status: 'ok', count: 0, offset: 0, total: 0, hasMore: false, mangas: [] });
+    }
+
+    const response = await axios.get(`${API}/manga`, {
+      params: {
+        title: q,
+        limit: limit,
+        offset: offset,
+        'availableTranslatedLanguage[]': 'ar',
+        'includes[]': 'cover_art',
+        'order[relevance]': 'desc'
+      }
+    });
+
+    const mangas = response.data.data.map(m => {
+      const title = m.attributes.title.ar 
+        || m.attributes.title.en 
+        || Object.values(m.attributes.title)[0] 
+        || 'بدون اسم';
+      const coverRel = m.relationships.find(r => r.type === 'cover_art');
+      const coverFile = coverRel?.attributes?.fileName;
+      const cover = coverFile 
+        ? `https://uploads.mangadex.org/covers/${m.id}/${coverFile}.256.jpg` 
+        : null;
+      return { id: m.id, title, cover };
+    });
+
+    const total = response.data.total || 0;
+    res.json({ 
+      status: 'ok', 
+      count: mangas.length, 
+      offset: offset,
+      total: total,
+      hasMore: (offset + limit) < total,
+      query: q,
+      mangas 
+    });
+  } catch (e) {
+    res.status(500).json({ status: 'error', message: e.message });
+  }
+});
+
+// 4) تفاصيل مانجا + الفصول العربية
 app.get('/manga/:id', async (req, res) => {
   try {
     const id = req.params.id;
@@ -76,7 +133,8 @@ app.get('/manga/:id', async (req, res) => {
       params: {
         limit: 500,
         'translatedLanguage[]': ['ar'],
-        'order[chapter]': 'desc'
+        'order[chapter]': 'desc',
+        'includes[]': []
       }
     });
 
@@ -84,16 +142,25 @@ app.get('/manga/:id', async (req, res) => {
       id: c.id,
       name: c.attributes.chapter 
         ? `الفصل ${c.attributes.chapter}` 
-        : c.attributes.title || 'فصل'
+        : c.attributes.title || 'فصل',
+      chapterNumber: c.attributes.chapter || '0'
     }));
 
-    res.json({ status: 'ok', id, title, cover, description, chapters });
+    res.json({ 
+      status: 'ok', 
+      id, 
+      title, 
+      cover, 
+      description, 
+      chapters,
+      chaptersCount: chapters.length
+    });
   } catch (e) {
     res.status(500).json({ status: 'error', message: e.message });
   }
 });
 
-// 4) صور الفصل
+// 5) صور الفصل
 app.get('/chapter/:id', async (req, res) => {
   try {
     const id = req.params.id;
@@ -105,7 +172,12 @@ app.get('/chapter/:id', async (req, res) => {
 
     const images = data.map(file => `${baseUrl}/data/${hash}/${file}`);
 
-    res.json({ status: 'ok', id, images });
+    res.json({ 
+      status: 'ok', 
+      id, 
+      count: images.length,
+      images 
+    });
   } catch (e) {
     res.status(500).json({ status: 'error', message: e.message });
   }
