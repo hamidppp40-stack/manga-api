@@ -12,12 +12,10 @@ const HEADERS = {
   'Accept-Language': 'ar,en;q=0.9'
 };
 
-// ============ 1) الصفحة الرئيسية ============
 app.get('/', (req, res) => {
   res.json({ status: 'ok', message: 'سيرفر مانجا ستار شغال!' });
 });
 
-// ============ 2) قائمة المانجا ============
 app.get('/manga', async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -34,12 +32,7 @@ app.get('/manga', async (req, res) => {
       
       if (title && link) {
         const slug = link.replace(BASE, '').replace(/^\/|\/$/g, '');
-        mangas.push({
-          id: slug,
-          title: title,
-          cover: img,
-          link: link
-        });
+        mangas.push({ id: slug, title: title, cover: img });
       }
     });
 
@@ -55,7 +48,6 @@ app.get('/manga', async (req, res) => {
   }
 });
 
-// ============ 3) البحث ============
 app.get('/manga/search', async (req, res) => {
   try {
     const q = req.query.q || '';
@@ -86,10 +78,9 @@ app.get('/manga/search', async (req, res) => {
   }
 });
 
-// ============ 4) تفاصيل المانجا + الفصول ============
-app.get('/manga/:slug(*)', async (req, res) => {
+app.get('/manga/*', async (req, res) => {
   try {
-    const slug = req.params.slug;
+    const slug = req.params[0];
     const url = `${BASE}/${slug}/`;
     const { data } = await axios.get(url, { headers: HEADERS });
     const $ = cheerio.load(data);
@@ -105,11 +96,7 @@ app.get('/manga/:slug(*)', async (req, res) => {
       const link = $(el).attr('href');
       if (link && name) {
         const chapterSlug = link.replace(BASE, '').replace(/^\/|\/$/g, '');
-        chapters.push({
-          id: chapterSlug,
-          name: name,
-          link: link
-        });
+        chapters.push({ id: chapterSlug, name: name });
       }
     });
 
@@ -127,10 +114,9 @@ app.get('/manga/:slug(*)', async (req, res) => {
   }
 });
 
-// ============ 5) صور الفصل ============
-app.get('/chapter/:slug(*)', async (req, res) => {
+app.get('/chapter/*', async (req, res) => {
   try {
-    const slug = req.params.slug;
+    const slug = req.params[0];
     const url = `${BASE}/${slug}/`;
     const { data } = await axios.get(url, { headers: HEADERS });
     const $ = cheerio.load(data);
