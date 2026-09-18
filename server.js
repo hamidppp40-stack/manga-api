@@ -1,147 +1,72 @@
 const express = require('express');
-const axios = require('axios');
-const cheerio = require('cheerio');
 const cors = require('cors');
-
+const Nyora = require('nyora-sdk').default;
 const app = express();
+const PORT = process.env.PORT || 3000;
+
 app.use(cors());
+const client = new Nyora();
 
-const BASE = 'https://azoramoon.com';
-const HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Accept-Language': 'ar,en;q=0.9'
-};
-
+// 1) الصفحة الرئيسية
 app.get('/', (req, res) => {
   res.json({ status: 'ok', message: 'سيرفر مانجا ستار شغال!' });
 });
 
+// 2) جلب المصادر العربية
+app.get('/sources', async (req, res) => {
+  try {
+    const allSources = await client.sources.list();
+    const arabicSources = allSources.filter(s => s.lang === 'ar');
+    res.json({ status: 'ok', count: arabicSources.length, sources: arabicSources });
+  } catch (e) {
+    res.status(500).json({ status: 'error', message: e.message });
+  }
+});
+
+// 3) قائمة المانجا
 app.get('/manga', async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const url = page > 1 ? `${BASE}/manga/page/${page}/` : `${BASE}/manga/`;
-    const { data } = await axios.get(url, { headers: HEADERS });
-    const $ = cheerio.load(data);
-
-    const mangas = [];
-    $('.page-item-detail, .c-tabs-item__content').each((i, el) => {
-      const titleEl = $(el).find('.post-title h3 a, .h4 a').first();
-      const title = titleEl.text().trim();
-      const link = titleEl.attr('href');
-      const img = $(el).find('img').attr('src') || $(el).find('img').attr('data-src');
-      
-      if (title && link) {
-        const slug = link.replace(BASE, '').replace(/^\/|\/$/g, '');
-        mangas.push({ id: slug, title: title, cover: img });
-      }
-    });
-
-    res.json({ 
-      status: 'ok', 
-      page: page, 
-      count: mangas.length, 
-      hasNextPage: mangas.length > 0,
-      mangas 
-    });
+    const { sourceId, page } = req.query;
+    const p = parseInt(page) || 1;
+    const result = await client.manga.popular(sourceId, p);
+    res.json({ status: 'ok', page: p, mangas: result.entries });
   } catch (e) {
     res.status(500).json({ status: 'error', message: e.message });
   }
 });
 
+// 4) البحث
 app.get('/manga/search', async (req, res) => {
   try {
-    const q = req.query.q || '';
-    if (!q.trim()) {
-      return res.json({ status: 'ok', count: 0, mangas: [] });
-    }
-
-    const url = `${BASE}/?s=${encodeURIComponent(q)}&post_type=wp-manga`;
-    const { data } = await axios.get(url, { headers: HEADERS });
-    const $ = cheerio.load(data);
-
-    const mangas = [];
-    $('.page-item-detail, .c-tabs-item__content').each((i, el) => {
-      const titleEl = $(el).find('.post-title h3 a, .h4 a').first();
-      const title = titleEl.text().trim();
-      const link = titleEl.attr('href');
-      const img = $(el).find('img').attr('src') || $(el).find('img').attr('data-src');
-
-      if (title && link) {
-        const slug = link.replace(BASE, '').replace(/^\/|\/$/g, '');
-        mangas.push({ id: slug, title, cover: img });
-      }
-    });
-
-    res.json({ status: 'ok', count: mangas.length, query: q, mangas });
+    const { sourceId, q, page } = req.query;
+    const p = parseInt(page) || 1;
+    const result = await client.manga.search(sourceId, q, p);
+    res.json({ status: 'ok', page: p, mangas: result.entries });
   } catch (e) {
     res.status(500).json({ status: 'error', message: e.message });
   }
 });
 
-app.get('/manga/*', async (req, res) => {
+// 5) تفاصيل المانجا
+app.get('/manga/details', async (req, res) => {
   try {
-    const slug = req.params[0];
-    const url = `${BASE}/${slug}/`;
-    const { data } = await axios.get(url, { headers: HEADERS });
-    const $ = cheerio.load(data);
-
-    const title = $('.post-title h1').text().trim();
-    const cover = $('.summary_image img').attr('src') || $('.summary_image img').attr('data-src');
-    const description = $('.description-summary p').text().trim() 
-                     || $('.summary__content p').text().trim();
-
-    const chapters = [];
-    $('.wp-manga-chapter a, li.wp-manga-chapter a').each((i, el) => {
-      const name = $(el).text().trim();
-      const link = $(el).attr('href');
-      if (link && name) {
-        const chapterSlug = link.replace(BASE, '').replace(/^\/|\/$/g, '');
-        chapters.push({ id: chapterSlug, name: name });
-      }
-    });
-
-    res.json({ 
-      status: 'ok', 
-      id: slug,
-      title, 
-      cover, 
-      description, 
-      chaptersCount: chapters.length,
-      chapters 
-    });
+    const { sourceId, mangaUrl, title } = req.query;
+    const details = await client.manga.details(sourceId, mangaUrl, { title });
+    res.json({ status: 'ok', details });
   } catch (e) {
     res.status(500).json({ status: 'error', message: e.message });
   }
 });
 
-app.get('/chapter/*', async (req, res) => {
+// 6) صور الفصل
+app.get('/chapter/pages', async (req, res) => {
   try {
-    const slug = req.params[0];
-    const url = `${BASE}/${slug}/`;
-    const { data } = await axios.get(url, { headers: HEADERS });
-    const $ = cheerio.load(data);
-
-    const images = [];
-    $('.reading-content img, .page-break img').each((i, el) => {
-      const src = $(el).attr('src') || $(el).attr('data-src');
-      if (src) {
-        const cleanSrc = src.trim();
-        if (cleanSrc && !cleanSrc.includes('loading')) {
-          images.push(cleanSrc);
-        }
-      }
-    });
-
-    res.json({ 
-      status: 'ok', 
-      id: slug, 
-      count: images.length, 
-      images 
-    });
+    const { sourceId, chapterUrl, branch } = req.query;
+    const pages = await client.manga.pages(sourceId, chapterUrl, { branch });
+    res.json({ status: 'ok', pages });
   } catch (e) {
     res.status(500).json({ status: 'error', message: e.message });
   }
 });
 
-const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
