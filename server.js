@@ -1,188 +1,91 @@
 const express = require('express');
-const cors = require('cors');
 const axios = require('axios');
-const app = express();
-const PORT = process.env.PORT || 3000;
+const cheerio = require('cheerio');
+const cors = require('cors');
 
+const app = express();
 app.use(cors());
 
-const API = 'https://api.mangadex.org';
+const BASE = 'https://mangatime.org';
+const HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+};
 
-// 1) الصفحة الرئيسية
-app.get('/', (req, res) => {
-  res.json({ status: 'ok', message: 'سيرفر مانجا ستار شغال!' });
-});
-
-// 2) قائمة المانجا مع Pagination
+// 1) قائمة المانجا
 app.get('/manga', async (req, res) => {
   try {
-    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
-    const offset = parseInt(req.query.offset) || 0;
+    const page = req.query.page || 1;
+    const url = page > 1 ? `${BASE}/page/${page}/` : BASE;
+    const { data } = await axios.get(url, { headers: HEADERS });
+    const $ = cheerio.load(data);
 
-    const response = await axios.get(`${API}/manga`, {
-      params: {
-        limit: limit,
-        offset: offset,
-        'availableTranslatedLanguage[]': 'ar',
-        'includes[]': 'cover_art',
-        'order[latestUploadedChapter]': 'desc'
+    const mangas = [];
+    $('.page-item-detail, .manga').each((i, el) => {
+      const title = $(el).find('.post-title h3 a, .h4 a').text().trim();
+      const link = $(el).find('.post-title h3 a, .h4 a').attr('href');
+      const img = $(el).find('img').attr('src') || $(el).find('img').attr('data-src');
+      if (title && link) {
+        mangas.push({
+          id: link.replace(BASE, '').replace(/\//g, ''),
+          title,
+          cover: img
+        });
       }
     });
 
-    const mangas = response.data.data.map(m => {
-      const title = m.attributes.title.ar 
-        || m.attributes.title.en 
-        || Object.values(m.attributes.title)[0] 
-        || 'بدون اسم';
-      const coverRel = m.relationships.find(r => r.type === 'cover_art');
-      const coverFile = coverRel?.attributes?.fileName;
-      const cover = coverFile 
-        ? `https://uploads.mangadex.org/covers/${m.id}/${coverFile}.256.jpg` 
-        : null;
-      return { id: m.id, title, cover };
-    });
-
-    const total = response.data.total || 0;
-    res.json({ 
-      status: 'ok', 
-      count: mangas.length, 
-      offset: offset,
-      total: total,
-      hasMore: (offset + limit) < total,
-      mangas 
-    });
+    res.json({ status: 'ok', page: parseInt(page), count: mangas.length, mangas });
   } catch (e) {
     res.status(500).json({ status: 'error', message: e.message });
   }
 });
 
-// 3) البحث في المانجا
-app.get('/manga/search', async (req, res) => {
+// 2) تفاصيل مانجا + الفصول
+app.get('/manga/:slug', async (req, res) => {
   try {
-    const q = req.query.q || '';
-    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
-    const offset = parseInt(req.query.offset) || 0;
+    const url = `${BASE}/${req.params.slug}/`;
+    const { data } = await axios.get(url, { headers: HEADERS });
+    const $ = cheerio.load(data);
 
-    if (!q || q.trim() === '') {
-      return res.json({ status: 'ok', count: 0, offset: 0, total: 0, hasMore: false, mangas: [] });
-    }
+    const title = $('.post-title h1').text().trim();
+    const cover = $('.summary_image img').attr('src');
+    const description = $('.description-summary p').text().trim();
 
-    const response = await axios.get(`${API}/manga`, {
-      params: {
-        title: q,
-        limit: limit,
-        offset: offset,
-        'availableTranslatedLanguage[]': 'ar',
-        'includes[]': 'cover_art',
-        'order[relevance]': 'desc'
+    const chapters = [];
+    $('.wp-manga-chapter a, li.wp-manga-chapter a').each((i, el) => {
+      const name = $(el).text().trim();
+      const link = $(el).attr('href');
+      if (link) {
+        chapters.push({
+          id: link.replace(BASE, '').replace(/\//g, ''),
+          name: name
+        });
       }
     });
 
-    const mangas = response.data.data.map(m => {
-      const title = m.attributes.title.ar 
-        || m.attributes.title.en 
-        || Object.values(m.attributes.title)[0] 
-        || 'بدون اسم';
-      const coverRel = m.relationships.find(r => r.type === 'cover_art');
-      const coverFile = coverRel?.attributes?.fileName;
-      const cover = coverFile 
-        ? `https://uploads.mangadex.org/covers/${m.id}/${coverFile}.256.jpg` 
-        : null;
-      return { id: m.id, title, cover };
-    });
-
-    const total = response.data.total || 0;
-    res.json({ 
-      status: 'ok', 
-      count: mangas.length, 
-      offset: offset,
-      total: total,
-      hasMore: (offset + limit) < total,
-      query: q,
-      mangas 
-    });
+    res.json({ status: 'ok', title, cover, description, chapters });
   } catch (e) {
     res.status(500).json({ status: 'error', message: e.message });
   }
 });
 
-// 4) تفاصيل مانجا + الفصول العربية
-app.get('/manga/:id', async (req, res) => {
+// 3) صور الفصل
+app.get('/chapter/:slug', async (req, res) => {
   try {
-    const id = req.params.id;
+    const url = `${BASE}/${req.params.slug}/`;
+    const { data } = await axios.get(url, { headers: HEADERS });
+    const $ = cheerio.load(data);
 
-    const info = await axios.get(`${API}/manga/${id}`, {
-      params: { 'includes[]': 'cover_art' }
+    const images = [];
+    $('.reading-content img').each((i, el) => {
+      const src = $(el).attr('src') || $(el).attr('data-src');
+      if (src) images.push(src.trim());
     });
 
-    const m = info.data.data;
-    const title = m.attributes.title.ar 
-      || m.attributes.title.en 
-      || Object.values(m.attributes.title)[0] 
-      || 'بدون اسم';
-    const description = m.attributes.description?.ar 
-      || m.attributes.description?.en 
-      || 'لا يوجد وصف';
-    const coverRel = m.relationships.find(r => r.type === 'cover_art');
-    const coverFile = coverRel?.attributes?.fileName;
-    const cover = coverFile 
-      ? `https://uploads.mangadex.org/covers/${id}/${coverFile}.512.jpg` 
-      : null;
-
-    const chaptersRes = await axios.get(`${API}/manga/${id}/feed`, {
-      params: {
-        limit: 500,
-        'translatedLanguage[]': ['ar'],
-        'order[chapter]': 'desc',
-        'includes[]': []
-      }
-    });
-
-    const chapters = chaptersRes.data.data.map(c => ({
-      id: c.id,
-      name: c.attributes.chapter 
-        ? `الفصل ${c.attributes.chapter}` 
-        : c.attributes.title || 'فصل',
-      chapterNumber: c.attributes.chapter || '0'
-    }));
-
-    res.json({ 
-      status: 'ok', 
-      id, 
-      title, 
-      cover, 
-      description, 
-      chapters,
-      chaptersCount: chapters.length
-    });
+    res.json({ status: 'ok', images });
   } catch (e) {
     res.status(500).json({ status: 'error', message: e.message });
   }
 });
 
-// 5) صور الفصل
-app.get('/chapter/:id', async (req, res) => {
-  try {
-    const id = req.params.id;
-
-    const chapterRes = await axios.get(`${API}/at-home/server/${id}`);
-    const baseUrl = chapterRes.data.baseUrl;
-    const hash = chapterRes.data.chapter.hash;
-    const data = chapterRes.data.chapter.data;
-
-    const images = data.map(file => `${baseUrl}/data/${hash}/${file}`);
-
-    res.json({ 
-      status: 'ok', 
-      id, 
-      count: images.length,
-      images 
-    });
-  } catch (e) {
-    res.status(500).json({ status: 'error', message: e.message });
-  }
-});
-
-app.listen(PORT, () => {
-  console.log('Server is running on port ' + PORT);
-});
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
